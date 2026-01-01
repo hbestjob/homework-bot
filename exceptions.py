@@ -27,8 +27,7 @@ class EndpointError(Exception):
 
 
 class ResponseFormatError(Exception):
-    """Возникает при нарушении формата ответа API (отсутствие ключей, неверные 
-    типы)."""
+    """Возникает при нарушении формата ответа API (нет ключей, ошибка типа)."""
 
 
 class TelegramError(Exception):

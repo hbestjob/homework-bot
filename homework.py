@@ -1,7 +1,4 @@
-"""
-Бот для мониторинга статусов домашних работ в Практикуме
-и отправки уведомлений в Telegram.
-"""
+"""Бот для проверки статусов в Практикуме и отправки уведомлений в Telegram."""
 
 import logging
 import sys
@@ -22,7 +19,7 @@ TELEGRAM_TOKEN = config.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = config.get("TELEGRAM_CHAT_ID")
 
 RETRY_PERIOD = 600
-ENDPOINT = "https://practicum.yandex.ru/api/user_api/homework_statuses/"
+ENDPOINT = "https://praktikum.yandex.ru/api/user_api/homework_statuses/"
 TIMEOUT = 10
 
 HOMEWORK_VERDICTS = {
@@ -164,11 +161,11 @@ def parse_status(homework):
 
 
 def main():
-    """Основная функция бота."""
+    """Основная логика работы бота."""
     check_tokens()
     bot = TeleBot(TELEGRAM_TOKEN)
     timestamp = int(time.time())
-    last_error_message = ""
+    last_error = None
 
     while True:
         try:
@@ -176,55 +173,30 @@ def main():
             homeworks = check_response(response)
 
             if homeworks:
-                current_homework = homeworks[0]
-                message = parse_status(current_homework)
-                send_message(bot, message)
+                for homework in homeworks:
+                    message = parse_status(homework)
+                    send_message(bot, message)
+                timestamp = max(hw.get('updated_at', timestamp)
+                                for hw in homeworks)
             else:
-                logging.debug("Новых статусов нет.")
+                logging.debug("Нет новых статусов")
 
-            timestamp = response.get("current_date", timestamp)
+            time.sleep(RETRY_PERIOD)
 
-        except EndpointError as e:
-            error_msg = "[EndpointError] %s"
-            logging.error(error_msg, e, exc_info=True)
-            if error_msg != last_error_message:
+        except (EndpointError, ResponseFormatError, TelegramError,
+                requests.RequestException) as error:
+            error_msg = f'Сбой в работе программы: {error}'
+            logging.error(error_msg)
+
+            if str(error) != str(last_error):
                 try:
-                    send_message(bot, error_msg % e)
-                    last_error_message = error_msg % e
+                    send_message(bot, error_msg)
                 except TelegramError:
-                    logging.error(
-                        "Не удалось отправить уведомление об ошибке в Telegram"
-                    )
+                    pass
+                last_error = error
 
-        except ResponseFormatError as e:
-            error_msg = "[ResponseFormatError] %s"
-            logging.error(error_msg, e, exc_info=True)
-            if error_msg != last_error_message:
-                try:
-                    send_message(bot, error_msg % e)
-                    last_error_message = error_msg % e
-                except TelegramError:
-                    logging.error(
-                        "Не удалось отправить уведомление о формате ответа"
-                    )
-
-        except TelegramError as e:
-            logging.error("[TelegramError] %s", e, exc_info=True)
-
-        except Exception as e:
-            error_msg = "[UnknownError] Непредвиденная ошибка: %s"
-            logging.error(error_msg, e, exc_info=True)
-            if error_msg != last_error_message:
-                try:
-                    send_message(bot, error_msg % e)
-                    last_error_message = error_msg % e
-                except TelegramError:
-                    logging.error(
-                        "Не удалось отправить уведомление о неизвестной ошибке"
-                    )
-
-        time.sleep(RETRY_PERIOD)
+            time.sleep(RETRY_PERIOD)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
