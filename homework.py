@@ -7,9 +7,7 @@ import requests
 from dotenv import load_dotenv, dotenv_values
 from telebot import TeleBot, apihelper
 
-
 from exceptions import EndpointError, ResponseFormatError, TelegramError
-
 
 load_dotenv()
 config = dotenv_values(".env")
@@ -19,8 +17,10 @@ TELEGRAM_TOKEN = config.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = config.get("TELEGRAM_CHAT_ID")
 
 RETRY_PERIOD = 600
-ENDPOINT = "https://praktikum.yandex.ru/api/user_api/homework_statuses/"
+ENDPOINT = "https://practicum.yandex.ru/api/user_api/homework_statuses/"
 TIMEOUT = 10
+HEADERS = {"Authorization": f"OAuth {PRACTICUM_TOKEN}"}
+
 
 HOMEWORK_VERDICTS = {
     "approved": "Работа проверена: ревьюеру всё понравилось. Ура!",
@@ -70,7 +70,7 @@ def send_message(bot, message):
         TelegramError: Если отправка сообщения не удалась.
     """
     try:
-        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message, timeout=10)
         logging.debug("Бот отправил сообщение: %s", message)
     except apihelper.ApiException as e:
         logging.error("Ошибка отправки в Telegram: %s", e)
@@ -95,7 +95,7 @@ def get_api_answer(timestamp):
     try:
         response = requests.get(
             ENDPOINT,
-            headers={"Authorization": f"OAuth {PRACTICUM_TOKEN}"},
+            headers=HEADERS,  # Используем глобальную константу HEADERS
             params=params,
             timeout=TIMEOUT
         )
@@ -116,19 +116,16 @@ def check_response(response):
         list: Список работ из поля 'homeworks'.
 
     Raises:
-        ResponseFormatError: Если ответ не соответствует ожидаемому формату.
+        TypeError: Если ответ не соответствует ожидаемому формату.
     """
     if not isinstance(response, dict):
-        raise ResponseFormatError(
-            f"Ответ API не словарь, получен {type(response)}"
-        )
+        raise TypeError(f"Ответ API не словарь, получен {type(response)}")
     if "homeworks" not in response:
-        raise ResponseFormatError("В ответе отсутствует ключ 'homeworks'")
+        raise TypeError("В ответе отсутствует ключ 'homeworks'")
     homeworks = response["homeworks"]
     if not isinstance(homeworks, list):
-        raise ResponseFormatError(
-            f"Поле 'homeworks' не список, получен {type(homeworks)}"
-        )
+        raise TypeError(
+            f"Поле 'homeworks' не список, получен {type(homeworks)}")
     return homeworks
 
 
@@ -157,7 +154,8 @@ def parse_status(homework):
         raise ResponseFormatError(f"Неизвестный статус: {status}")
 
     verdict = HOMEWORK_VERDICTS[status]
-    return f'Изменился статус работы "{homework_name}". {verdict}'
+    # Исправлен шаблон сообщения под требования теста
+    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
 def main():
@@ -176,8 +174,10 @@ def main():
                 for homework in homeworks:
                     message = parse_status(homework)
                     send_message(bot, message)
-                timestamp = max(hw.get('updated_at', timestamp)
-                                for hw in homeworks)
+
+                timestamp = max(
+                    hw.get("updated_at", timestamp) for hw in homeworks
+                )
             else:
                 logging.debug("Нет новых статусов")
 
