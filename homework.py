@@ -7,7 +7,7 @@ import requests
 from dotenv import load_dotenv, dotenv_values
 from telebot import TeleBot, apihelper
 
-# Импорт пользовательских исключений
+
 from exceptions import EndpointError, ResponseFormatError, TelegramError
 
 
