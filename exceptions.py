@@ -18,7 +18,7 @@ class EndpointError(Exception):
         """
         if message is None and response is not None:
             message = (
-                f"Эндпоинт {response.url} недоступен. "
+                f"Ошибка при обращении к эндпоинту {response.url}. "
                 f"Код ответа: {response.status_code}, тело: {response.text}"
             )
         elif message is None:
@@ -26,9 +26,6 @@ class EndpointError(Exception):
         super().__init__(message)
 
 
+
 class ResponseFormatError(Exception):
     """Возникает при нарушении формата ответа API (нет ключей, ошибка типа)."""
-
-
-class TelegramError(Exception):
-    """Возникает при ошибках отправки сообщений в Telegram."""

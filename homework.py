@@ -3,11 +3,12 @@
 import logging
 import sys
 import time
+
 import requests
 from dotenv import load_dotenv, dotenv_values
 from telebot import TeleBot, apihelper
 
-from exceptions import EndpointError, ResponseFormatError, TelegramError
+from exceptions import EndpointError, ResponseFormatError
 
 load_dotenv()
 config = dotenv_values(".env")
@@ -21,60 +22,68 @@ ENDPOINT = "https://practicum.yandex.ru/api/user_api/homework_statuses/"
 TIMEOUT = 10
 HEADERS = {"Authorization": f"OAuth {PRACTICUM_TOKEN}"}
 
-
 HOMEWORK_VERDICTS = {
     "approved": "Работа проверена: ревьюеру всё понравилось. Ура!",
     "reviewing": "Работа взята на проверку ревьюером.",
     "rejected": "Работа проверена: у ревьюера есть замечания."
 }
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s,%(msecs)03d [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[
-        logging.FileHandler("bot.log", encoding="utf-8"),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
+if __name__ == '__main__':
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s,%(msecs)03d [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[
+            logging.FileHandler("bot.log", encoding="utf-8"),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
 
 
 def check_tokens():
     """Проверяет наличие всех обязательных переменных окружения.
 
-    Если какая-либо переменная отсутствует, записывает ошибку в лог
+    Если какая‑либо переменная отсутствует, записывает ошибку в лог
     и завершает работу бота.
     """
-    missing = []
-    if not PRACTICUM_TOKEN:
-        missing.append("PRACTICUM_TOKEN")
-    if not TELEGRAM_TOKEN:
-        missing.append("TELEGRAM_TOKEN")
-    if not TELEGRAM_CHAT_ID:
-        missing.append("TELEGRAM_CHAT_ID")
+    required_vars = {
+        "PRACTICUM_TOKEN": PRACTICUM_TOKEN,
+        "TELEGRAM_TOKEN": TELEGRAM_TOKEN,
+        "TELEGRAM_CHAT_ID": TELEGRAM_CHAT_ID
+    }
+    missing = [var for var, value in required_vars.items() if not value]
 
     if missing:
-        error_msg = "Отсутствует обязательная переменная окружения: %s"
-        logging.critical(error_msg, ", ".join(missing))
-        sys.exit(1)
+        error_msg = (
+            f"Отсутствует обязательная переменная окружения: "
+            f"{', '.join(missing)}"
+        )
+        logging.critical(error_msg)
+        raise ValueError(error_msg)
 
 
 def send_message(bot, message):
     """Отправляет сообщение в Telegram.
 
     Args:
-        bot (TeleBot): Экземпляр Telegram-бота.
+        bot (TeleBot): Экземпляр Telegram‑бота.
         message (str): Текст сообщения.
 
-    Raises:
-        TelegramError: Если отправка сообщения не удалась.
+    Returns:
+        bool: True, если сообщение отправлено успешно, False — в случае ошибки.
     """
+    logging.info(f"Попытка отправки сообщения в Telegram: {message}")
     try:
-        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message, timeout=10)
-        logging.debug("Бот отправил сообщение: %s", message)
-    except apihelper.ApiException as e:
-        logging.error("Ошибка отправки в Telegram: %s", e)
-        raise TelegramError(f"Не удалось отправить сообщение: {e}") from e
+        bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=message,
+            timeout=TIMEOUT
+        )
+        logging.debug(f"Бот отправил сообщение: {message}")
+        return True
+    except (apihelper.ApiException, requests.RequestException) as e:
+        logging.error(f"Ошибка отправки в Telegram: {e}")
+        return False
 
 
 def get_api_answer(timestamp):
@@ -90,20 +99,22 @@ def get_api_answer(timestamp):
         EndpointError: Если запрос не удался или статус ответа ≠ 200.
     """
     params = {"from_date": timestamp}
-    logging.info("Запрос к %s, параметры: %s", ENDPOINT, params)
+    logging.info(f"Запрос к {ENDPOINT}, параметры: {params}")
 
     try:
         response = requests.get(
             ENDPOINT,
-            headers=HEADERS,  # Используем глобальную константу HEADERS
+            headers=HEADERS,
             params=params,
             timeout=TIMEOUT
         )
-        if response.status_code != 200:
-            raise EndpointError(response=response)
-        return response.json()
     except requests.RequestException as e:
         raise EndpointError(message=f"Ошибка запроса: {e}") from e
+
+    if response.status_code != 200:
+        raise EndpointError(response=response)
+
+    return response.json()
 
 
 def check_response(response):
@@ -154,48 +165,45 @@ def parse_status(homework):
         raise ResponseFormatError(f"Неизвестный статус: {status}")
 
     verdict = HOMEWORK_VERDICTS[status]
-    # Исправлен шаблон сообщения под требования теста
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
 def main():
     """Основная логика работы бота."""
-    check_tokens()
-    bot = TeleBot(TELEGRAM_TOKEN)
-    timestamp = int(time.time())
-    last_error = None
+    try:
+        check_tokens()
+        bot = TeleBot(TELEGRAM_TOKEN)
+        timestamp = int(time.time())
+        last_error = None
 
-    while True:
-        try:
-            response = get_api_answer(timestamp)
-            homeworks = check_response(response)
+        while True:
+            try:
+                response = get_api_answer(timestamp)
+                homeworks = check_response(response)
 
-            if homeworks:
-                for homework in homeworks:
+                if homeworks:
+                    homework = homeworks[0]
                     message = parse_status(homework)
-                    send_message(bot, message)
+                    if send_message(bot, message):
+                        timestamp = response.get("current_date", timestamp)
+                        last_error = None
+                else:
+                    logging.debug("Нет новых статусов")
 
-                timestamp = max(
-                    hw.get("updated_at", timestamp) for hw in homeworks
-                )
-            else:
-                logging.debug("Нет новых статусов")
+            except Exception as error:
+                error_msg = f'Сбой в работе программы: {error}'
+                logging.error(error_msg)
 
-            time.sleep(RETRY_PERIOD)
-
-        except (EndpointError, ResponseFormatError, TelegramError,
-                requests.RequestException) as error:
-            error_msg = f'Сбой в работе программы: {error}'
-            logging.error(error_msg)
-
-            if str(error) != str(last_error):
-                try:
+                if str(error) != str(last_error):
                     send_message(bot, error_msg)
-                except TelegramError:
-                    pass
-                last_error = error
+                    last_error = error
 
-            time.sleep(RETRY_PERIOD)
+            finally:
+                time.sleep(RETRY_PERIOD)
+
+    except Exception as e:
+        logging.critical(f"Критическая ошибка: {e}")
+        sys.exit(1)
 
 
 if __name__ == '__main__':
