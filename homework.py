@@ -28,16 +28,9 @@ HOMEWORK_VERDICTS = {
     "rejected": "Работа проверена: у ревьюера есть замечания."
 }
 
-if __name__ == '__main__':
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s,%(msecs)03d [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[
-            logging.FileHandler("bot.log", encoding="utf-8"),
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
+
+class MissingEnvVarsError(Exception):
+    """Исключение для случая отсутствия обязательных переменных окружения."""
 
 
 def check_tokens():
@@ -59,7 +52,7 @@ def check_tokens():
             f"{', '.join(missing)}"
         )
         logging.critical(error_msg)
-        raise ValueError(error_msg)
+        raise MissingEnvVarsError(error_msg)
 
 
 def send_message(bot, message):
@@ -111,7 +104,7 @@ def get_api_answer(timestamp):
     except requests.RequestException as e:
         raise EndpointError(message=f"Ошибка запроса: {e}") from e
 
-    if response.status_code != 200:
+    if response.status_code != getattr(requests.codes, 'ok'):  # type: ignore
         raise EndpointError(response=response)
 
     return response.json()
@@ -170,41 +163,52 @@ def parse_status(homework):
 
 def main():
     """Основная логика работы бота."""
-    try:
-        check_tokens()
-        bot = TeleBot(TELEGRAM_TOKEN)
-        timestamp = int(time.time())
-        last_error = None
+    check_tokens()
+    bot = TeleBot(TELEGRAM_TOKEN)
+    timestamp = int(time.time())
+    last_error = None
 
-        while True:
-            try:
-                response = get_api_answer(timestamp)
-                homeworks = check_response(response)
+    while True:
+        try:
+            response = get_api_answer(timestamp)
+            homeworks = check_response(response)
 
-                if homeworks:
-                    homework = homeworks[0]
-                    message = parse_status(homework)
-                    if send_message(bot, message):
-                        timestamp = response.get("current_date", timestamp)
-                        last_error = None
-                else:
-                    logging.debug("Нет новых статусов")
+            if homeworks:
+                homework = homeworks[0]
+                message = parse_status(homework)
+                if send_message(bot, message):
+                    timestamp = response.get("current_date", timestamp)
+                    last_error = None
+            else:
+                logging.debug("Нет новых статусов")
 
-            except Exception as error:
-                error_msg = f'Сбой в работе программы: {error}'
-                logging.error(error_msg)
+        except Exception as error:
+            error_msg = f'Сбой в работе программы: {error}'
+            logging.error(error_msg)
 
-                if str(error) != str(last_error):
-                    send_message(bot, error_msg)
-                    last_error = error
+            if str(error) != str(last_error):
+                send_message(bot, error_msg)
+                last_error = error
 
-            finally:
-                time.sleep(RETRY_PERIOD)
-
-    except Exception as e:
-        logging.critical(f"Критическая ошибка: {e}")
-        sys.exit(1)
+        finally:
+            time.sleep(RETRY_PERIOD)
 
 
 if __name__ == '__main__':
-    main()
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s,%(msecs)03d [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[
+            logging.FileHandler("bot.log", encoding="utf-8"),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+
+    try:
+        main()
+    except MissingEnvVarsError:
+        sys.exit(1)
+    except Exception as e:
+        logging.critical(f"Критическая ошибка: {e}")
+        sys.exit(1)
